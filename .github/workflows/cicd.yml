@@ -1,0 +1,24 @@
+name: Environment Variables Practice
+
+on: [push]
+
+jobs:
+  deploy-info:
+    runs-on: ubuntu-latest
+
+    env:
+      APP_NAME: nl2sql
+      ENVIRONMENT: staging
+      VERSION: "1.0.0"
+
+    steps:
+      - name: Print application name
+        run: echo "Application is $APP_NAME"
+
+      - name: Print environment and version
+        run: echo "Deploying to $ENVIRONMENT using version $VERSION"
+
+      - name: Create deployment information
+        run: |
+          echo "$APP_NAME version $VERSION is targeting $ENVIRONMENT" > deployment-info.txt
+          cat deployment-info.txt
