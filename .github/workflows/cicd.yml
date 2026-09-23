@@ -1,24 +1,25 @@
-name: Environment Variables Practice
+name: Test and Deploy
 
-on: [push]
+on: [workflow_dispatch]
 
 jobs:
-  deploy-info:
+  test:
     runs-on: ubuntu-latest
 
-    env:
-      APP_NAME: nl2sql
-      ENVIRONMENT: staging
-      VERSION: "1.0.0"
-
     steps:
-      - name: Print application name
-        run: echo "Application is $APP_NAME"
+      - name: Run tests
+        run: echo "Running tests"
 
-      - name: Print environment and version
-        run: echo "Deploying to $ENVIRONMENT using version $VERSION"
+      - name: Tests passed
+        run: echo "Tests passed"
 
-      - name: Create deployment information
-        run: |
-          echo "$APP_NAME version $VERSION is targeting $ENVIRONMENT" > deployment-info.txt
-          cat deployment-info.txt
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:git
+      - name: Deploy application
+        run: echo "Deploying application"
+
+      - name: Deployment complete
+        run: echo "Deployment complete"
