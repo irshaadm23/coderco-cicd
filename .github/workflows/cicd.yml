@@ -1,25 +1,15 @@
-name: Test and Deploy
+name: Terraform CI
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
 
 jobs:
-  test:
+  terraform:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Run tests
-        run: echo "Running tests"
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Tests passed
-        run: echo "Tests passed"
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: test
-
-    steps:
-      - name: Deploy application
-        run: echo "Deploying application"
-
-      - name: Deployment complete
-        run: echo "Deployment complete"
+      - name: Run custom Terraform action
+        uses: ./.github/actions/terraform-check
