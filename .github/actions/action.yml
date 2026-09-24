@@ -1,0 +1,19 @@
+name: Terraform Checks
+
+description: Run Terraform formatting and validation
+
+runs:
+  using: composite
+
+  steps:
+    - name: Check formatting
+      shell: bash
+      run: terraform fmt -check
+
+    - name: Initialise Terraform
+      shell: bash
+      run: terraform init
+
+    - name: Validate Terraform
+      shell: bash
+      run: terraform validate
