@@ -1,0 +1,33 @@
+name: Assignment 1 CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r assignment1/requirements.txt
+
+      - name: Run Ruff linting
+        run: python -m ruff check assignment1/app assignment1/tests
+
+      - name: Run unit tests
+        run: python -m pytest assignment1/tests/ -v
+
+      - name: Build Docker image
+        uses: ./.github/actions/docker-build
+        with:
+          image-name: service-status-api
+          context: assignment1

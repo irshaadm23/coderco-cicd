@@ -1,19 +1,19 @@
-name: Terraform Checks
+name: Docker Build
+description: Build a Docker image using a configurable image name
 
-description: Run Terraform formatting and validation
+inputs:
+  image-name:
+    description: Name of the Docker image
+    required: true
+
+  context:
+    description: Docker build context
+    required: true
 
 runs:
   using: composite
 
   steps:
-    - name: Check formatting
+    - name: Build Docker image
       shell: bash
-      run: terraform fmt -check
-
-    - name: Initialise Terraform
-      shell: bash
-      run: terraform init
-
-    - name: Validate Terraform
-      shell: bash
-      run: terraform validate
+      run: docker build -t "${{ inputs.image-name }}" "${{ inputs.context }}"
