@@ -5,7 +5,8 @@ on:
   pull_request:
 
 jobs:
-  test-and-build:
+
+  lint:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,8 +24,37 @@ jobs:
       - name: Run Ruff linting
         run: python -m ruff check assignment1/app assignment1/tests
 
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r assignment1/requirements.txt
+
       - name: Run unit tests
-        run: python -m pytest assignment1/tests/ -v
+        working-directory: assignment1
+        run: python -m pytest tests/ -v
+
+
+  docker-build:
+    needs:
+      - lint
+      - test
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Build Docker image
         uses: ./.github/actions/docker-build
