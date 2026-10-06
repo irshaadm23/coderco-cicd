@@ -18,6 +18,9 @@ env:
   # Azure Container Registry name
   ACR_NAME: irshaadcicd
 
+  # Full Azure Container Registry login server
+  ACR_LOGIN_SERVER: irshaadcicd.azurecr.io
+
 
 jobs:
 
@@ -113,19 +116,9 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # Allow Docker to push images to Azure Container Registry
+      # Authenticate Docker to Azure Container Registry
       - name: Login to ACR
         run: az acr login --name "$ACR_NAME"
-
-      # Get the full ACR registry address
-      - name: Get ACR login server
-        run: |
-          ACR_LOGIN_SERVER=$(az acr show \
-            --name "$ACR_NAME" \
-            --query loginServer \
-            --output tsv)
-
-          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> "$GITHUB_ENV"
 
       # Build, tag and push the Docker image using the custom action
       - name: Publish Docker image
