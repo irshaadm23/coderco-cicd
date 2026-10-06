@@ -1,59 +1,93 @@
-# FastAPI CI Pipeline
+# FastAPI CI/CD Pipeline
 
-A small FastAPI service I built to practise CI properly rather than only
-writing basic GitHub Actions workflows.
+A small FastAPI service I built to practise CI/CD properly rather than only writing basic GitHub Actions workflows.
 
-The main focus of this project was creating a pipeline that
-automatically checks code quality, runs tests and only builds the Docker
-image when those checks pass. I also created a custom composite action
-for the Docker build so the build logic can be reused with different
-image names or build contexts.
+The project started as a CI exercise and was extended into a full container delivery flow using GitHub Actions, Docker and Azure.
 
-> Current stage: CI is implemented. CD is the next stage of the project.
+The main goal was to understand how code moves from validation to a versioned container artifact, how that artifact is published securely, and how the same artifact is deployed to a running environment.
 
-## CI Flow
+---
 
-``` text
-Push / Pull Request
-        |
-        v
-   GitHub Actions
-        |
-   +----+----+
-   |         |
-   v         v
- Ruff      pytest
-   |         |
-   +----+----+
-        |
-    both pass
-        |
-        v
-  Docker Build
+## Current Stage
+
+CI and CD are both implemented.
+
+The current flow validates pull requests, protects `main`, builds and versions Docker images, authenticates to Azure using OIDC, pushes images to Azure Container Registry, and deploys the exact SHA-tagged image to Azure Container Apps.
+
+---
+
+## CI/CD Flow
+
+```text
+Feature Branch
+    |
+    v
+Pull Request to main
+    |
+    +-------------------+
+    |                   |
+    v                   v
+  Ruff                pytest
+    |                   |
+    +---------+---------+
+              |
+              v
+      Docker build check
+              |
+              v
+        Merge to main
+              |
+              v
+      GitHub Actions
+              |
+              v
+       Azure OIDC login
+              |
+              v
+          ACR login
+              |
+              v
+     Build + tag + push
+              |
+              v
+ Azure Container Registry
+              |
+              v
+   Azure Container Apps
+              |
+              v
+       FastAPI runtime
 ```
 
-Ruff and pytest run as separate jobs because they do not depend on each
-other. The Docker job uses `needs` so it only runs after both validation
-jobs succeed.
+---
 
 ## Tech Stack
 
--   Python / FastAPI
--   pytest
--   Ruff
--   Docker
--   GitHub Actions
--   Git
+- Python / FastAPI
+- pytest
+- Ruff
+- Docker
+- GitHub Actions
+- Azure Container Registry
+- Azure Container Apps
+- Microsoft Entra ID
+- GitHub OIDC
+- Azure RBAC
+- Git
+
+---
 
 ## Project Structure
 
-``` text
+```text
 coderco-cicd/
 ├── .github/
 │   ├── workflows/
 │   │   └── ci.yml
 │   └── actions/
-│       └── docker-build/
+│       ├── docker-build/
+│       │   └── action.yml
+│       └── docker-publish/
 │           └── action.yml
 ├── assignment1/
 │   ├── app/
@@ -67,107 +101,113 @@ coderco-cicd/
 └── README.md
 ```
 
+---
+
 ## Application
 
-The application is deliberately small because the main focus of the
-project is the delivery pipeline.
+The application is deliberately small because the focus is the delivery pipeline.
 
-It currently exposes:
+It exposes:
 
-``` text
+```text
 GET /health
 GET /version
 ```
 
 `/health` returns:
 
-``` json
+```json
 {
   "status": "healthy"
 }
 ```
 
-I use the health endpoint in the automated test, and it also gives me
-something I can later use for container/deployment health checks.
+The health endpoint is used in automated testing and gives a simple runtime check once the container is deployed.
+
+---
 
 ## Running Locally
 
 From the repository:
 
-``` bash
+```bash
 cd assignment1
 python -m venv .venv
 ```
 
 On Windows PowerShell:
 
-``` powershell
+```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-Install the dependencies:
+Install dependencies:
 
-``` bash
+```bash
 python -m pip install -r requirements.txt
 ```
 
 Start the API:
 
-``` bash
+```bash
 uvicorn app.main:app --reload
+```
+
+Check:
+
+```text
+http://localhost:8000/health
+```
+
+---
+
+## Tests and Linting
+
+Run tests:
+
+```bash
+python -m pytest tests -v
+```
+
+The current test sends a request to `/health` and checks for HTTP 200 and the expected JSON response.
+
+Run Ruff:
+
+```bash
+python -m ruff check app tests
+```
+
+These are the same checks used in CI.
+
+---
+
+## Docker
+
+Build locally from the repository root:
+
+```bash
+docker build -t service-status-api assignment1
+```
+
+Run the container:
+
+```bash
+docker run -d --name status-api -p 8000:8000 service-status-api
 ```
 
 Then check:
 
-``` text
+```text
 http://localhost:8000/health
 ```
 
-## Tests and Linting
-
-Run the tests:
-
-``` bash
-python -m pytest tests -v
-```
-
-The current test sends a request to `/health` and checks that the API
-returns HTTP 200 and the expected JSON response.
-
-Run Ruff:
-
-``` bash
-python -m ruff check app tests
-```
-
-These are the same types of checks the CI pipeline runs automatically.
-
-## Docker
-
-Build the image from the repository root:
-
-``` bash
-docker build -t service-status-api assignment1
-```
-
-Run it:
-
-``` bash
-docker run -d --name status-api -p 8000:8000 service-status-api
-```
-
-The application can then be checked again through:
-
-``` text
-http://localhost:8000/health
-```
+---
 
 ## CI Design
 
-I split linting and testing into separate jobs rather than making the
-whole pipeline sequential.
+Linting and testing run as separate jobs because they are independent.
 
-``` text
+```text
         +--> lint ----+
         |             |
 change -|             +--> docker-build
@@ -175,286 +215,513 @@ change -|             +--> docker-build
         +--> test ----+
 ```
 
-The Docker job depends on both:
+The Docker validation job uses:
 
-``` yaml
+```yaml
 needs:
   - lint
   - test
 ```
 
-This means failed code does not continue to the Docker build stage.
+This prevents failed code from progressing to the Docker build check.
 
-For a project this small, one sequential job would be simpler and would
-avoid repeating some runner setup. I kept them separate because it gives
-clearer failure isolation and let me practise job dependencies and
-parallel execution.
+For a project this small, one sequential job would be simpler and would avoid duplicated runner setup. I kept linting and testing separate because it gave clearer failure isolation and let me practise parallel jobs and dependencies.
 
-## Custom Docker Build Action
+---
 
-Instead of putting the Docker command directly in the workflow, I
-created a local composite action:
+## Pull Request Controls
 
-``` text
+The repository uses branch protection on `main`.
+
+Pull requests must pass:
+
+- `lint`
+- `test`
+- `docker-build`
+
+The Docker build job only runs on pull requests.
+
+Its purpose is to prove that the application can still be packaged successfully before the change is merged.
+
+Nothing is published to Azure from a pull request.
+
+---
+
+## Main Branch Release
+
+Once code reaches `main`, the workflow follows a separate release path.
+
+The release job:
+
+1. authenticates GitHub Actions to Azure using OIDC
+2. logs in to Azure Container Registry
+3. builds the release image
+4. tags the image with the Git commit SHA
+5. pushes the image to ACR
+
+The release image is therefore traceable back to the exact source commit that produced it.
+
+Example:
+
+```text
+irshaadcicd.azurecr.io/service-status-api:<git-sha>
+```
+
+---
+
+## Custom Docker Actions
+
+### Docker Build Action
+
+The pull request path uses:
+
+```text
 .github/actions/docker-build/action.yml
 ```
 
-The workflow passes values into it:
+This action is intentionally small and only validates that the Docker image can build.
 
-``` yaml
-with:
-  image-name: service-status-api
-  context: assignment1
+### Docker Publish Action
+
+The release path uses:
+
+```text
+.github/actions/docker-publish/action.yml
 ```
 
-The action uses those inputs to run the Docker build.
+This action handles:
 
-This is probably more abstraction than a single Docker command needs,
-but I wanted to understand how reusable actions and inputs work. It
-would make more sense if the same build logic was being shared across
-multiple services.
+```text
+docker build
+docker tag
+docker push
+```
 
-## Troubleshooting
+I kept Azure authentication outside the composite action so the identity and permission flow stays visible in the main workflow.
 
-The pipeline did not work first time. I tried to debug each problem from
-the failed job rather than changing several things at once.
+That makes security-sensitive steps easier to review and troubleshoot.
 
-The process I used was:
+---
 
-``` text
+## Artifact Strategy
+
+One of the main design decisions was whether Docker build, tag and push should be split across separate GitHub Actions jobs.
+
+Each GitHub job gets a fresh runner.
+
+If I built the image in one job and tried to tag or push it in another, I would need to explicitly transfer the image between runners using a process such as:
+
+```text
+docker save
+upload artifact
+download artifact
+docker load
+```
+
+That would work, but it would add:
+
+- extra storage
+- more network transfer
+- longer pipeline time
+- more workflow complexity
+- another failure point
+
+For this project, that complexity did not provide enough value.
+
+I therefore kept the stateful Docker work together in one release job and used Azure Container Registry as the durable artifact store.
+
+The release pattern is:
+
+```text
+validate
+build once for release
+tag with Git SHA
+push to ACR
+deploy that exact registry image
+```
+
+---
+
+## Why the Image Is Tagged With the Git SHA
+
+The release image is tagged using:
+
+```yaml
+image-tag: ${{ github.sha }}
+```
+
+This gives a direct mapping between:
+
+```text
+source commit
+Docker image
+ACR artifact
+deployed container
+```
+
+Using only `latest` would make it harder to prove which code is actually running.
+
+The SHA tag improves traceability, rollback and debugging.
+
+---
+
+## Azure Authentication With GitHub OIDC
+
+I used GitHub OIDC instead of storing a long-lived Azure client secret in GitHub.
+
+The flow is:
+
+```text
+GitHub Actions
+    |
+    v
+GitHub issues OIDC token
+    |
+    v
+Azure checks the federated identity rule
+    |
+    v
+temporary Azure credentials
+```
+
+The federated identity is scoped to the GitHub repository and `main` branch.
+
+This means Azure can verify which GitHub workflow context is requesting access without GitHub storing a permanent Azure password.
+
+---
+
+## Authentication vs Authorization
+
+This project made the difference between authentication and authorization much clearer.
+
+OIDC answers:
+
+```text
+Who is this workflow?
+```
+
+Azure RBAC answers:
+
+```text
+What is this identity allowed to do?
+```
+
+The GitHub Actions service principal is given permission to push images to ACR.
+
+The Azure Container App uses managed identity with pull-only access to retrieve the image.
+
+So the responsibilities are separated:
+
+```text
+GitHub Actions
+= publish image
+
+Azure Container App
+= pull and run image
+```
+
+---
+
+## Azure RBAC Troubleshooting
+
+The first ACR push failed with:
+
+```text
+denied: requested access to the resource is denied
+```
+
+The Docker build and tag had succeeded, so the failure was not in Docker itself.
+
+I checked the ACR role assignment and then the registry permission model.
+
+The registry was using:
+
+```text
+RBAC Registry + ABAC Repository Permissions
+```
+
+while I had assigned the traditional `AcrPush` role.
+
+For this project I switched the registry back to standard RBAC Registry Permissions so `AcrPush` matched the permission model I was using.
+
+After that, the workflow successfully pushed the image.
+
+The main lesson was to separate authentication, authorization and registry permission model instead of treating every push failure as a Docker or credential problem.
+
+---
+
+## Azure Container Registry
+
+The final image is stored in:
+
+```text
+irshaadcicd.azurecr.io
+```
+
+Repository:
+
+```text
+service-status-api
+```
+
+The image is stored using the Git commit SHA as its tag.
+
+This makes ACR the durable handoff point between the CI/CD pipeline and the runtime environment.
+
+---
+
+## Azure Container Apps Deployment
+
+The image is deployed to Azure Container Apps using the exact SHA-tagged artifact already stored in ACR.
+
+The deployment does not rebuild the image.
+
+Container Apps pulls the existing artifact and runs the FastAPI service.
+
+The container uses:
+
+```text
+Target port: 8000
+Ingress: external
+Transport: HTTP/Auto
+```
+
+The runtime uses managed identity with ACR pull access rather than registry admin credentials.
+
+This keeps the runtime permission separate from the pipeline permission.
+
+---
+
+## Runtime Verification
+
+After deployment, the application is verified using:
+
+```text
+/health
+/version
+```
+
+The Container Apps environment also provides metrics and Log Analytics integration for runtime troubleshooting.
+
+The service is running on the Consumption workload profile, so replicas can scale down when idle.
+
+For this project I kept scale-to-zero enabled rather than forcing a minimum replica count.
+
+---
+
+## Troubleshooting Approach
+
+The pipeline did not work first time.
+
+I debugged each failure from the evidence rather than changing several things at once.
+
+My process was:
+
+```text
 Find failed job
-      |
-Read failed step/logs
-      |
-Identify exact error
-      |
-Compare CI with local setup
-      |
-Reproduce locally if possible
-      |
+Read failed step and logs
+Identify the exact error
+Form a hypothesis
 Make one targeted change
-      |
-Test -> commit -> push
-      |
-Check the next CI run
+Commit and push
+Check the next run
 ```
 
-### Ruff failed in CI
+---
 
-The first issue was the lint job failing with:
+## Ruff Failed in CI
 
-``` text
+The lint job initially failed with:
+
+```text
 I001 - Import block is unsorted or unformatted
 ```
 
-I checked the GitHub Actions logs first to find the exact job, step and
-file causing the failure.
+I checked the workflow logs and compared the CI execution context with local execution.
 
-I then ran Ruff locally:
-
-``` bash
-cd assignment1
-python -m ruff check app tests
-```
-
-During this I noticed I was running Ruff from `assignment1` locally,
-while the CI command had been running from the repository root.
+Locally I had been running Ruff from `assignment1`, while CI was running from the repository root.
 
 I changed the CI step to:
 
-``` yaml
+```yaml
 - name: Run Ruff linting
   working-directory: assignment1
   run: python -m ruff check app tests
 ```
 
-This made the local and CI execution contexts consistent.
+That made the local and CI execution contexts consistent.
 
-The main lesson from this was that when something works locally but
-fails in CI, I should compare the environments rather than assuming the
-code is the only difference. Working directory, dependency versions,
-runtime version, environment variables and configuration can all change
-behaviour.
+The lesson was that when something works locally but fails in CI, I should compare environments before assuming the code itself is the only difference.
 
-### GitHub could not find my custom action
+---
 
-Once linting and tests were passing, the pipeline got further and
-exposed another problem in the Docker job.
+## GitHub Could Not Find the Custom Action
 
-At first it looked like a Docker problem, but the logs showed that
-`docker build` had not actually started. GitHub was failing while trying
-to load the local action.
+After fixing Ruff, the pipeline progressed further and exposed another problem.
 
-My workflow contained:
+The workflow referenced:
 
-``` yaml
+```yaml
 uses: ./.github/actions/docker-build
 ```
 
-So I checked the repository structure.
+but the action file was not stored in the directory GitHub expected.
 
 GitHub expected:
 
-``` text
+```text
 .github/actions/docker-build/action.yml
 ```
 
-but I had:
+I moved the file so the repository structure matched the workflow path.
 
-``` text
-.github/actions/action.yml
-```
+This reinforced the value of narrowing a pipeline failure down to the exact stage before changing anything.
 
-I moved `action.yml` into the `docker-build` directory so the filesystem
-matched the path used by the workflow.
+---
 
-That taught me to narrow a pipeline failure down before trying to fix
-it. In this case Docker itself was fine; the problem was how GitHub
-Actions resolved the local action path.
-
-## Design Choices
+## Design Choices and Trade-offs
 
 ### Parallel lint and test jobs
 
-I kept these independent because neither needs the result of the other.
+Benefit:
 
-**Benefit:** clearer failures and the jobs can run at the same time.
+- faster independent feedback
+- clearer failure isolation
 
-**Trade-off:** each runner has to perform its own setup, so there is
-some duplicated work.
+Trade-off:
 
-### Docker after validation
+- each job gets its own runner
+- setup work is duplicated
 
-The image is only built after linting and tests pass.
+### Docker build after validation
 
-**Benefit:** there is no reason to package code that has already failed
-required checks.
+Benefit:
 
-**Trade-off:** if a quality check is badly configured it can block the
-build, so the checks themselves need to be maintained properly.
+- failed code does not progress to packaging
 
-### Custom action
+Trade-off:
 
-I used a composite action to make the Docker build configurable.
+- required checks must be maintained correctly or they can block releases unnecessarily
 
-**Benefit:** the logic can be reused.
+### Composite actions
 
-**Trade-off:** it adds another layer to understand and maintain. For one
-build command, keeping it directly in the workflow would also be
-reasonable.
+I used composite actions for repeated Docker logic.
+
+Benefit:
+
+- reusable logic
+- cleaner workflow
+- configurable inputs
+
+Trade-off:
+
+- another abstraction layer to understand and maintain
+
+For one-off Azure authentication steps, keeping the commands visible in the main workflow was clearer than wrapping them in another custom action.
+
+### Build and publish on the same runner
+
+Benefit:
+
+- no Docker image handoff between jobs
+- fewer network transfers
+- fewer failure points
+
+Trade-off:
+
+- build, tag and push are coupled inside one job
+
+For this project, that was the simpler and more appropriate design.
+
+---
 
 ## Current Limitations
 
-This is currently a CI project, not a production-ready CI/CD platform.
+The project is now a working CI/CD pipeline, but it is not a complete production platform.
 
-The main gaps are:
+Current gaps include:
 
--   small test suite
--   no container smoke test after the image is built
--   dependencies still need to be pinned to tested versions
--   no vulnerability scanning
--   image is not yet published to a registry
--   no staging or production deployment
--   no post-deployment health check
--   no monitoring or alerting
--   no rollback process
+- small test suite
+- no container vulnerability scanning
+- dependencies are not fully pinned
+- no automated post-deployment smoke test from GitHub Actions
+- no automated rollback
+- no alerting
+- no staging environment
+- Container Apps deployment is currently configured manually rather than updated automatically from the workflow
+- infrastructure is not yet provisioned through Terraform
+
+---
 
 ## What I Would Improve Next
 
-The next version of the pipeline would move from only
-validating/building the application to producing a traceable artifact
-and delivering it somewhere.
+The next improvements would be:
 
-My planned flow is:
+1. Add a smoke test against the built container.
+2. Add dependency and image vulnerability scanning.
+3. Automate the Azure Container Apps deployment after ACR publish.
+4. Verify `/health` automatically after deployment.
+5. Add rollback using a previously known-good SHA-tagged image.
+6. Add alerts around failed revisions or unhealthy responses.
+7. Provision the Azure infrastructure through Terraform.
 
-``` text
-Code Change
-     |
-     v
-Lint + Tests
-     |
-     v
-Docker Build
-     |
-     v
-Container Smoke Test
-     |
-     v
-Security Scan
-     |
-     v
-Tag with Git SHA
-     |
-     v
-Container Registry
-     |
-     v
-Deployment
-     |
-     v
-Health Verification
-```
-
-The first improvements I would make are:
-
-1.  Pin the dependency versions that have been tested successfully.
-2.  Add a smoke test that starts the built container and calls
-    `/health`.
-3.  Tag the Docker image with the Git commit SHA instead of relying on
-    `latest`.
-4.  Scan the image/dependencies before publishing.
-5.  Push the validated image to GHCR or Amazon ECR.
-6.  Add a real deployment stage and verify the application after
-    deployment.
-7.  Add logs, metrics and alerts once there is a runtime environment.
-
-For a larger deployment I would also provision the infrastructure with
-Terraform and document rollback/recovery steps.
+---
 
 ## What I Learned
 
-The biggest thing I took from this project was that CI is not just
-writing YAML.
+The biggest lesson was that CI/CD is not just writing YAML.
 
-I had to understand how jobs depend on each other, how GitHub runners
-execute commands, how working directories affect tools, how local custom
-actions are resolved, and how to use logs to narrow down a failure.
+I had to think about:
 
-The troubleshooting process was especially useful because the first
-error was not the only error. Fixing Ruff allowed the pipeline to
-progress far enough to expose the custom-action path problem.
+- which work should run in parallel
+- when jobs should depend on each other
+- what state disappears with a GitHub runner
+- where artifacts should live
+- when a composite action actually reduces complexity
+- when abstraction makes troubleshooting harder
+- how to separate authentication from authorization
+- how to keep cloud credentials short-lived
+- how to make a release artifact traceable to source code
+- how to troubleshoot a pipeline from the exact failed stage
 
-Instead of treating a red pipeline as one big problem, I now approach it
-as:
+The most useful design lesson was that more jobs and more abstraction do not automatically make a pipeline better.
 
-``` text
-What failed?
-      |
-What evidence do the logs give me?
-      |
-Can I reproduce it?
-      |
-What is the smallest change that tests my theory?
-      |
-Did the next run prove the fix worked?
-```
+The goal is to use enough structure to make the release process reliable and understandable without adding unnecessary handoffs.
 
-## Next Step
+---
 
-The next stage is CD.
+## Final Flow
 
-I want to take the Docker image that has passed CI, give it an immutable
-tag, publish it to a registry and then deploy that exact artifact to an
-environment.
-
-That will extend the current flow from:
-
-``` text
-Code -> Validate -> Build
-```
-
-to:
-
-``` text
-Code -> Validate -> Build -> Publish -> Deploy -> Verify
+```text
+Code Change
+    |
+    v
+Pull Request
+    |
+    v
+Ruff + pytest
+    |
+    v
+Docker Build Validation
+    |
+    v
+Merge to main
+    |
+    v
+GitHub OIDC Authentication
+    |
+    v
+Build Release Image
+    |
+    v
+Tag With Git SHA
+    |
+    v
+Push to Azure Container Registry
+    |
+    v
+Deploy Exact Image to Azure Container Apps
+    |
+    v
+Verify Running FastAPI Service
 ```
