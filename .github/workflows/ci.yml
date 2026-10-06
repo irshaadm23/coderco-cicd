@@ -1,11 +1,27 @@
-name: Assignment 1 CI
+name: Assignment 1 CI/CD
 
 on:
-  push:
+  # Run validation when a pull request targets main
   pull_request:
+    branches:
+      - main
+
+  # Run the release workflow when code reaches main
+  push:
+    branches:
+      - main
+
+env:
+  # Docker image name
+  IMAGE_NAME: service-status-api
+
+  # Azure Container Registry name
+  ACR_NAME: irshaadcicd
+
 
 jobs:
 
+  # Check code quality with Ruff
   lint:
     runs-on: ubuntu-latest
 
@@ -26,6 +42,7 @@ jobs:
         run: python -m ruff check app tests
 
 
+  # Run automated tests
   test:
     runs-on: ubuntu-latest
 
@@ -46,10 +63,13 @@ jobs:
         run: python -m pytest tests/ -v
 
 
+  # Validate that the Docker image can build on pull requests
   docker-build:
     needs:
       - lint
       - test
+
+    if: github.event_name == 'pull_request'
 
     runs-on: ubuntu-latest
 
@@ -57,8 +77,61 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Docker image
+      - name: Validate Docker image build
         uses: ./.github/actions/docker-build
         with:
-          image-name: service-status-api
+          image-name: ${{ env.IMAGE_NAME }}
           context: assignment1
+
+
+  # Build and publish the release image after code reaches main
+  publish-image:
+    needs:
+      - lint
+      - test
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Allow the workflow to read repository files
+      contents: read
+
+      # Allow GitHub to request an OIDC token for Azure authentication
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Authenticate GitHub Actions to Azure using OIDC
+      - name: Authenticate to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Allow Docker to push images to Azure Container Registry
+      - name: Login to ACR
+        run: az acr login --name "$ACR_NAME"
+
+      # Get the full ACR registry address
+      - name: Get ACR login server
+        run: |
+          ACR_LOGIN_SERVER=$(az acr show \
+            --name "$ACR_NAME" \
+            --query loginServer \
+            --output tsv)
+
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> "$GITHUB_ENV"
+
+      # Build, tag and push the Docker image using the custom action
+      - name: Publish Docker image
+        uses: ./.github/actions/docker-publish
+        with:
+          image-name: ${{ env.IMAGE_NAME }}
+          context: assignment1
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          image-tag: ${{ github.sha }}
